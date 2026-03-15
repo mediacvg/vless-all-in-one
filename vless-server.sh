@@ -1,6 +1,6 @@
 #!/bin/bash 
 #═══════════════════════════════════════════════════════════════════════════════
-#  多协议代理一键部署脚本 v3.4.13 [服务端]
+#  多协议代理一键部署脚本 v3.5.1 [服务端]
 #  
 #  架构升级:
 #    • Xray 核心: 处理 TCP/TLS 协议 (VLESS/VMess/Trojan/SOCKS/SS2022)
@@ -17,7 +17,7 @@
 #  项目地址: https://github.com/Zyx0rx/vless-all-in-one
 #═══════════════════════════════════════════════════════════════════════════════
 
-readonly VERSION="3.4.13"
+readonly VERSION="3.5.1"
 readonly AUTHOR="Zyx0rx"
 readonly REPO_URL="https://github.com/Zyx0rx/vless-all-in-one"
 readonly SCRIPT_REPO="Zyx0rx/vless-all-in-one"
@@ -13009,6 +13009,143 @@ test_routing() {
     return 0
 }
 
+# 访问限制预设
+ACCESS_RESTRICT_CN_DOMAINS="geosite:cn,geoip:cn"
+ACCESS_RESTRICT_BTPT_DOMAINS="geosite:category-pt,geosite:tracker,geosite:public-tracker,geosite:private-tracker,bittorrent"
+
+access_restriction_enabled() {
+    [[ ! -f "$DB_FILE" ]] && return 1
+    local count
+    count=$(jq '[.routing_rules[]? | select(.id == "restrict-cn-geosite" or .id == "restrict-cn-geoip" or .id == "restrict-btpt-trackers" or .id == "restrict-btpt-pt" or .type == "restrict-cn" or .type == "restrict-btpt")] | length' "$DB_FILE" 2>/dev/null)
+    [[ "${count:-0}" -gt 0 ]]
+}
+
+_enable_access_rule() {
+    local type="$1" domains="$2"
+    db_del_routing_rule "$type" "by_type"
+    db_add_routing_rule "$type" "block" "$domains" "as_is"
+}
+
+disable_access_restriction() {
+    db_del_routing_rule "restrict-cn" "by_type"
+    db_del_routing_rule "restrict-btpt" "by_type"
+    local tmp=$(mktemp)
+    jq '.routing_rules = [.routing_rules[]? | select(.id != "restrict-cn-geosite" and .id != "restrict-cn-geoip" and .id != "restrict-btpt-trackers" and .id != "restrict-btpt-pt")]' "$DB_FILE" > "$tmp" && mv "$tmp" "$DB_FILE"
+    _regenerate_proxy_configs
+    _ok "访问限制已关闭"
+    _pause
+}
+
+show_access_restriction_status() {
+    _header
+    echo -e "  ${W}访问限制状态${NC}"
+    _line
+    local rules=$(db_get_routing_rules)
+    local cn_enabled="否" bt_enabled="否"
+    echo "$rules" | jq -e '.[] | select(.id == "restrict-cn-geosite" or .id == "restrict-cn-geoip" or .type == "restrict-cn")' >/dev/null 2>&1 && cn_enabled="是"
+    echo "$rules" | jq -e '.[] | select(.id == "restrict-btpt-trackers" or .id == "restrict-btpt-pt" or .type == "restrict-btpt")' >/dev/null 2>&1 && bt_enabled="是"
+    echo -e "  禁止回国: ${G}${cn_enabled}${NC}"
+    echo -e "  禁止 BT/PT: ${G}${bt_enabled}${NC}"
+    echo ""
+    echo -e "  ${D}当前预设规则:${NC}"
+    echo "$rules" | jq -r '.[] | select(.id == "restrict-cn-geosite" or .id == "restrict-cn-geoip" or .id == "restrict-btpt-trackers" or .id == "restrict-btpt-pt" or .type == "restrict-cn" or .type == "restrict-btpt") | "  • " + (.id // .type) + " -> " + .outbound + " (" + (.domains // "") + ")"' 2>/dev/null || true
+    _line
+    read -rp "  按回车返回... " _
+}
+
+enable_access_restriction() {
+    _header
+    echo -e "  ${W}启用回国 / BT/PT 限制${NC}"
+    _line
+    echo -e "  ${D}将写入以下预设拦截规则:${NC}"
+    echo -e "  • geosite:cn / geoip:cn -> block"
+    echo -e "  • BT/PT 相关域名与协议关键字 -> block"
+    echo ""
+    read -rp "  确认启用? [Y/n]: " confirm
+    [[ "$confirm" =~ ^[nN]$ ]] && return 0
+    local tmp=$(mktemp)
+    jq '.routing_rules = [.routing_rules[]? | select(.id != "restrict-cn-geosite" and .id != "restrict-cn-geoip" and .id != "restrict-btpt-trackers" and .id != "restrict-btpt-pt" and .type != "restrict-cn" and .type != "restrict-btpt")]' "$DB_FILE" > "$tmp" && mv "$tmp" "$DB_FILE"
+    db_add_routing_rule "custom" "block" "geosite:cn" "as_is"
+    python3 - "$DB_FILE" <<'PY2'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1])
+d=json.loads(p.read_text())
+for r in d.get('routing_rules',[]):
+    if r.get('domains')=='geosite:cn' and r.get('outbound')=='block':
+        r['id']='restrict-cn-geosite'
+        break
+p.write_text(json.dumps(d,ensure_ascii=False,indent=2))
+PY2
+    db_add_routing_rule "custom" "block" "geoip:cn" "as_is"
+    python3 - "$DB_FILE" <<'PY2'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1])
+d=json.loads(p.read_text())
+for r in d.get('routing_rules',[]):
+    if r.get('domains')=='geoip:cn' and r.get('outbound')=='block':
+        r['id']='restrict-cn-geoip'
+        break
+p.write_text(json.dumps(d,ensure_ascii=False,indent=2))
+PY2
+    db_add_routing_rule "custom" "block" "geosite:tracker,geosite:public-tracker,geosite:private-tracker" "as_is"
+    python3 - "$DB_FILE" <<'PY2'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1])
+d=json.loads(p.read_text())
+for r in d.get('routing_rules',[]):
+    if r.get('domains')=='geosite:tracker,geosite:public-tracker,geosite:private-tracker' and r.get('outbound')=='block':
+        r['id']='restrict-btpt-trackers'
+        break
+p.write_text(json.dumps(d,ensure_ascii=False,indent=2))
+PY2
+    db_add_routing_rule "custom" "block" "geosite:category-pt" "as_is"
+    python3 - "$DB_FILE" <<'PY2'
+import json,sys
+from pathlib import Path
+p=Path(sys.argv[1])
+d=json.loads(p.read_text())
+for r in d.get('routing_rules',[]):
+    if r.get('domains')=='geosite:category-pt' and r.get('outbound')=='block':
+        r['id']='restrict-btpt-pt'
+        break
+p.write_text(json.dumps(d,ensure_ascii=False,indent=2))
+PY2
+    _regenerate_proxy_configs
+    _ok "访问限制已启用"
+    sleep 1
+    return 0
+}
+
+manage_access_restrictions() {
+    while true; do
+        _header
+        echo -e "  ${W}访问限制${NC}"
+        _line
+        local access_action="启用回国 / BT/PT 限制"
+        access_restriction_enabled && access_action="关闭回国 / BT/PT 限制"
+        _item "1" "$access_action"
+        _item "2" "查看当前限制状态"
+        _item "0" "返回"
+        _line
+        read -rp "  请选择: " choice
+        case "$choice" in
+            1)
+                if access_restriction_enabled; then
+                    disable_access_restriction
+                else
+                    enable_access_restriction
+                fi
+                ;;
+            2) show_access_restriction_status ;;
+            0) return ;;
+            *) _err "无效选择"; sleep 1 ;;
+        esac
+    done
+}
+
 # 配置分流规则
 configure_routing_rules() {
     while true; do
@@ -13770,8 +13907,9 @@ manage_routing() {
         _item "3" "配置分流规则"
         _item "4" "直连出口设置"
         _item "5" "多IP入出站配置"
-        _item "6" "测试分流效果"
-        _item "7" "查看当前配置"
+        _item "6" "访问限制"
+        _item "7" "测试分流效果"
+        _item "8" "查看当前配置"
         _item "0" "返回"
         _line
         
@@ -13783,13 +13921,14 @@ manage_routing() {
             3) configure_routing_rules ;;
             4) configure_direct_outbound ;;
             5) manage_ip_routing ;;
-            6)
+            6) manage_access_restrictions ;;
+            7)
                 _header
                 echo -e "  ${W}测试分流效果${NC}"
                 test_routing
                 _pause
                 ;;
-            7)
+            8)
                 _header
                 echo -e "  ${W}当前分流配置${NC}"
                 _line
@@ -13803,6 +13942,7 @@ manage_routing() {
                 read -rp "  按回车返回..." _
                 ;;
             0) return ;;
+            *) _err "无效选择"; _pause ;;
         esac
     done
 }
@@ -19629,6 +19769,11 @@ show_status() {
         fi
         
         echo -e "  分流: ${G}${rules_count}条规则${display_info}${NC}"
+    fi
+    if access_restriction_enabled; then
+        echo -e "  访问限制: ${G}已启用${NC}"
+    else
+        echo -e "  访问限制: ${D}未启用${NC}"
     fi
 }
 
