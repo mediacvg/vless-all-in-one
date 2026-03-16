@@ -3416,6 +3416,26 @@ generate_xray_config() {
         return 1
     fi
     
+    # 最终净化访问限制规则（防止历史/兼容逻辑把 tracker 扩成当前环境不支持的 private/public-tracker）
+    if [[ -f "$CFG/config.json" ]]; then
+        local tmp=$(mktemp)
+        if jq '
+            if .routing and .routing.rules then
+                .routing.rules = [
+                    .routing.rules[] |
+                    select(
+                        (.domain == null) or
+                        ((.domain | index("geosite:private-tracker")) == null and (.domain | index("geosite:public-tracker")) == null)
+                    )
+                ]
+            else . end
+        ' "$CFG/config.json" > "$tmp" 2>/dev/null; then
+            mv "$tmp" "$CFG/config.json"
+        else
+            rm -f "$tmp"
+        fi
+    fi
+
     # 验证最终配置文件的 JSON 格式
     if ! jq empty "$CFG/config.json" 2>/dev/null; then
         _err "生成的 Xray 配置文件 JSON 格式错误"
