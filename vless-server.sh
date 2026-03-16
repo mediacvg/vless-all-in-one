@@ -13153,7 +13153,24 @@ ACCESS_RESTRICT_BTPT_DOMAINS="geosite:tracker"
 access_restriction_enabled() {
     [[ ! -f "$DB_FILE" ]] && return 1
     local count
-    count=$(jq '[.routing_rules[]? | select(.id == "restrict-cn-geosite" or .id == "restrict-cn-geoip" or .id == "restrict-btpt-tracker" or .type == "restrict-cn" or .type == "restrict-btpt")] | length' "$DB_FILE" 2>/dev/null)
+    count=$(jq '[.routing_rules[]? | select(
+        .id == "restrict-cn-geosite" or
+        .id == "restrict-cn-geoip" or
+        .id == "restrict-btpt-tracker" or
+        .id == "restrict-btpt-trackers" or
+        .id == "restrict-btpt-pt" or
+        .type == "restrict-cn" or
+        .type == "restrict-btpt" or
+        ((.outbound // "") == "block" and (
+            (.domains // "") == "geosite:tracker,geosite:public-tracker,geosite:private-tracker" or
+            (.domains // "") == "geosite:category-pt" or
+            (.domains // "") == "geosite:cn" or
+            (.domains // "") == "geoip:cn" or
+            (.domains // "") == "geosite:tracker" or
+            (.domains // "") == "geosite:public-tracker" or
+            (.domains // "") == "geosite:private-tracker"
+        ))
+    )] | length' "$DB_FILE" 2>/dev/null)
     [[ "${count:-0}" -gt 0 ]]
 }
 
@@ -13166,22 +13183,24 @@ _enable_access_rule() {
 cleanup_legacy_access_restriction_rules() {
     [[ ! -f "$DB_FILE" ]] && return 0
     local tmp=$(mktemp)
-    jq '.routing_rules = [.routing_rules[]? | select(
-        .id != "restrict-cn-geosite" and
-        .id != "restrict-cn-geoip" and
-        .id != "restrict-btpt-tracker" and
-        .id != "restrict-btpt-trackers" and
-        .id != "restrict-btpt-pt" and
-        .type != "restrict-cn" and
-        .type != "restrict-btpt" and
-        (.domains // "") != "geosite:tracker,geosite:public-tracker,geosite:private-tracker" and
-        (.domains // "") != "geosite:category-pt" and
-        (.domains // "") != "geosite:cn" and
-        (.domains // "") != "geoip:cn" and
-        (.domains // "") != "geosite:tracker" and
-        (.domains // "") != "geosite:public-tracker" and
-        (.domains // "") != "geosite:private-tracker"
-    )]' "$DB_FILE" > "$tmp" && mv "$tmp" "$DB_FILE"
+    jq '.routing_rules = [.routing_rules[]? | select((
+        .id == "restrict-cn-geosite" or
+        .id == "restrict-cn-geoip" or
+        .id == "restrict-btpt-tracker" or
+        .id == "restrict-btpt-trackers" or
+        .id == "restrict-btpt-pt" or
+        .type == "restrict-cn" or
+        .type == "restrict-btpt" or
+        ((.outbound // "") == "block" and (
+            (.domains // "") == "geosite:tracker,geosite:public-tracker,geosite:private-tracker" or
+            (.domains // "") == "geosite:category-pt" or
+            (.domains // "") == "geosite:cn" or
+            (.domains // "") == "geoip:cn" or
+            (.domains // "") == "geosite:tracker" or
+            (.domains // "") == "geosite:public-tracker" or
+            (.domains // "") == "geosite:private-tracker"
+        ))
+    ) | not)]' "$DB_FILE" > "$tmp" && mv "$tmp" "$DB_FILE"
 }
 
 disable_access_restriction() {
@@ -13199,13 +13218,47 @@ show_access_restriction_status() {
     _line
     local rules=$(db_get_routing_rules)
     local cn_enabled="否" bt_enabled="否"
-    echo "$rules" | jq -e '.[] | select(.id == "restrict-cn-geosite" or .id == "restrict-cn-geoip" or .type == "restrict-cn")' >/dev/null 2>&1 && cn_enabled="是"
-    echo "$rules" | jq -e '.[] | select(.id == "restrict-btpt-tracker" or .type == "restrict-btpt")' >/dev/null 2>&1 && bt_enabled="是"
+    echo "$rules" | jq -e '.[] | select(
+        .id == "restrict-cn-geosite" or
+        .id == "restrict-cn-geoip" or
+        .type == "restrict-cn" or
+        ((.outbound // "") == "block" and ((.domains // "") == "geosite:cn" or (.domains // "") == "geoip:cn"))
+    )' >/dev/null 2>&1 && cn_enabled="是"
+    echo "$rules" | jq -e '.[] | select(
+        .id == "restrict-btpt-tracker" or
+        .id == "restrict-btpt-trackers" or
+        .id == "restrict-btpt-pt" or
+        .type == "restrict-btpt" or
+        ((.outbound // "") == "block" and (
+            (.domains // "") == "geosite:tracker" or
+            (.domains // "") == "geosite:public-tracker" or
+            (.domains // "") == "geosite:private-tracker" or
+            (.domains // "") == "geosite:tracker,geosite:public-tracker,geosite:private-tracker" or
+            (.domains // "") == "geosite:category-pt"
+        ))
+    )' >/dev/null 2>&1 && bt_enabled="是"
     echo -e "  禁止回国: ${G}${cn_enabled}${NC}"
     echo -e "  禁止 BT/PT: ${G}${bt_enabled}${NC}"
     echo ""
     echo -e "  ${D}当前预设规则:${NC}"
-    echo "$rules" | jq -r '.[] | select(.id == "restrict-cn-geosite" or .id == "restrict-cn-geoip" or .id == "restrict-btpt-tracker" or .type == "restrict-cn" or .type == "restrict-btpt") | "  • " + (.id // .type) + " -> " + .outbound + " (" + (.domains // "") + ")"' 2>/dev/null || true
+    echo "$rules" | jq -r '.[] | select(
+        .id == "restrict-cn-geosite" or
+        .id == "restrict-cn-geoip" or
+        .id == "restrict-btpt-tracker" or
+        .id == "restrict-btpt-trackers" or
+        .id == "restrict-btpt-pt" or
+        .type == "restrict-cn" or
+        .type == "restrict-btpt" or
+        ((.outbound // "") == "block" and (
+            (.domains // "") == "geosite:cn" or
+            (.domains // "") == "geoip:cn" or
+            (.domains // "") == "geosite:tracker" or
+            (.domains // "") == "geosite:public-tracker" or
+            (.domains // "") == "geosite:private-tracker" or
+            (.domains // "") == "geosite:tracker,geosite:public-tracker,geosite:private-tracker" or
+            (.domains // "") == "geosite:category-pt"
+        ))
+    ) | "  • " + (.id // .type // "legacy") + " -> " + (.outbound // "") + " (" + (.domains // "") + ")"' 2>/dev/null || true
     _line
     read -rp "  按回车返回... " _
 }
