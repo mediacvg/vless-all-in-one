@@ -38,7 +38,7 @@ For users who need Sing-box traffic sync / quota / expiry workflows, download th
 
 A step-by-step installation note is provided in the release asset:
 
-- `README-sing-box-v2api.md`
+- `README-sing-box-with-v2ray-api.md`
 
 ## Star History
 
