@@ -8980,17 +8980,43 @@ _build_singbox_ruleset() {
     esac
 }
 
-_ensure_singbox_rulesets_from_routing_rules() {
+_list_missing_singbox_rulesets_from_routing_rules() {
     local routing_rules="$1"
     [[ -z "$routing_rules" || "$routing_rules" == "[]" ]] && return 0
 
-    local tags=$(echo "$routing_rules" | jq -r '.[]? | .rule_set[]?' 2>/dev/null | sort -u)
+    local tags
+    tags=$(echo "$routing_rules" | jq -r '.[]? | .rule_set[]?' 2>/dev/null | sort -u)
     [[ -z "$tags" ]] && return 0
 
     local tag
     for tag in $tags; do
         local path=$(_singbox_ruleset_path "$tag")
+        [[ -s "$path" ]] || echo "$tag"
+    done
+}
+
+_ensure_singbox_rulesets_from_routing_rules() {
+    local routing_rules="$1"
+    [[ -z "$routing_rules" || "$routing_rules" == "[]" ]] && return 0
+
+    local tags
+    tags=$(echo "$routing_rules" | jq -r '.[]? | .rule_set[]?' 2>/dev/null | sort -u)
+    [[ -z "$tags" ]] && return 0
+
+    local missing_tags
+    missing_tags=$(_list_missing_singbox_rulesets_from_routing_rules "$routing_rules")
+    if [[ -n "$missing_tags" ]]; then
+        local missing_count
+        missing_count=$(printf '%s\n' "$missing_tags" | sed '/^$/d' | wc -l | tr -d ' ')
+        _info "正在准备 Sing-box 规则集缓存 (${missing_count} 项)..."
+        _warn "首次启用或缓存缺失时，需要下载并编译规则集，可能耗时 30~120 秒，请耐心等待"
+    fi
+
+    local tag
+    for tag in $tags; do
+        local path=$(_singbox_ruleset_path "$tag")
         if [[ ! -s "$path" ]]; then
+            _info "生成规则集: $tag"
             _build_singbox_ruleset "$tag" || {
                 _err "生成 Sing-box 规则集失败: $tag"
                 return 1
@@ -13695,6 +13721,13 @@ for r in d.get('routing_rules',[]):
         break
 p.write_text(json.dumps(d,ensure_ascii=False,indent=2))
 PY2
+
+    if [[ -n "$(get_singbox_protocols 2>/dev/null)" ]]; then
+        echo ""
+        _info "正在重建代理配置..."
+        _info "若本机首次为 Sing-box 启用访问限制，可能会额外下载并编译规则集"
+    fi
+
     _regenerate_proxy_configs
     _ok "访问限制已启用"
     sleep 1

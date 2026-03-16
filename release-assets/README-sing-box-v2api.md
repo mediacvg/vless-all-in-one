@@ -2,6 +2,8 @@
 
 This release includes a custom **Sing-box** binary with `with_v2ray_api` enabled.
 
+Current custom version string: **zyx0rx-v2api1-a11cd1e**
+
 It is required for **Sing-box user traffic statistics** in `vless-all-in-one` v3.5.2, including:
 
 - Hysteria2 user traffic stats
